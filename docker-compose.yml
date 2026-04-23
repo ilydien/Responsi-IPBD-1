@@ -31,6 +31,8 @@ services:
       PREFECT_HOME: /root/.prefect
     volumes:
       - ./scripts:/app/scripts
+      - ./dags:/app/dags
+      - ./data:/app/data:wa
       - prefect_data:/root/.prefect
     command: ["prefect", "server", "start", "--host", "0.0.0.0"]
     ports:

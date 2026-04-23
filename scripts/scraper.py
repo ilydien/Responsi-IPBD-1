@@ -1,244 +1,279 @@
+import csv
 import json
-import os
 import random
-import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
 
 
-class WiredScraper:
-    def __init__(self):
-        self.base_url = "https://www.wired.com"
-        self.session_id = f"wired_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self.articles = []
-        self.output_dir = Path("data")
-        self.output_dir.mkdir(exist_ok=True)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+]
 
-    def setup_driver(self):
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(30)
-        return driver
 
-    def scrape_wired(self):
-        driver = None
+def get_random_user_agent():
+    return random.choice(USER_AGENTS)
+
+
+def create_driver():
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--ignore-ssl-errors")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+    options.add_argument(f"user-agent={get_random_user_agent()}")
+    
+    driver = webdriver.Chrome(options=options)
+    
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            window.chrome = {runtime: {}};
+        """
+    })
+    
+    return driver
+
+
+def human_scroll(driver, min_scrolls=2, max_scrolls=4):
+    """Human-like scrolling with random delays"""
+    for _ in range(random.randint(min_scrolls, max_scrolls)):
+        scroll_amount = random.randint(300, 700)
+        driver.execute_script(f"window.scrollBy(0, {scroll_amount})")
+        time.sleep(random.uniform(0.8, 1.5))
+
+
+def random_mouse_move(driver):
+    """Random mouse movement to simulate human"""
+    try:
+        action = ActionChains(driver)
+        x = random.randint(100, 500)
+        y = random.randint(100, 500)
+        action.move_by_offset(x, y)
+        action.perform()
+    except:
+        pass
+
+
+def safe_delay(min_sec=1, max_sec=3):
+    """Random safe delay between actions"""
+    time.sleep(random.uniform(min_sec, max_sec))
+
+
+def get_description(driver):
+    selectors = [
+        "//meta[@name='description']",
+        "//meta[@property='og:description']",
+        "//*[contains(@class, 'dek')]",
+        "//*[contains(@class, 'summary')]",
+    ]
+    
+    for selector in selectors:
         try:
-            print("Setting up Chrome driver...")
-            driver = self.setup_driver()
+            elem = driver.find_element(By.XPATH, selector)
+            if selector.startswith("//meta"):
+                desc = elem.get_attribute("content")
+            else:
+                desc = elem.text
+            if desc and desc.strip():
+                return desc.strip()
+        except:
+            continue
+    
+    try:
+        paragraphs = driver.find_elements(By.CSS_SELECTOR, "article p, .body-content p")
+        if paragraphs:
+            return paragraphs[0].text.strip()[:300]
+    except:
+        pass
+    
+    return ""
+
+
+def get_author(driver):
+    selectors = [
+        "//a[contains(@href, '/author/')]",
+        "//*[@rel='author']",
+        "//*[contains(@class, 'author')]",
+        "//*[contains(text(), 'By ')]",
+    ]
+    
+    for selector in selectors:
+        try:
+            elem = driver.find_element(By.XPATH, selector)
+            text = elem.text.strip()
+            if text:
+                if not text.startswith("By "):
+                    text = "By " + text
+                return text
+        except:
+            continue
+    
+    return ""
+
+
+CATEGORY_URLS = [
+    "https://www.wired.com/category/security/",
+    "https://www.wired.com/category/science/",
+    "https://www.wired.com/category/business/",
+    "https://www.wired.com/category/culture/",
+    "https://www.wired.com/category/gear/",
+]
+
+
+def collect_article_links(driver):
+    all_urls = []
+    
+    for cat_url in CATEGORY_URLS:
+        print(f"\n[COLLECT] Getting links from: {cat_url}")
+        driver.get(cat_url)
+        safe_delay(3, 5)
+        
+        human_scroll(driver, 3, 5)
+        safe_delay(1, 2)
+        
+        random_mouse_move(driver)
+        
+        link_elements = driver.find_elements(By.XPATH, "//a[contains(@href, '/story/')]")
+        count_before = len(all_urls)
+        
+        for elem in link_elements:
+            try:
+                url = elem.get_attribute("href")
+                if url and "/story/" in url and url not in all_urls and url.startswith("http"):
+                    all_urls.append(url)
+            except:
+                continue
+        
+        print(f"   +{len(all_urls) - count_before} links (total: {len(all_urls)})")
+        
+        if len(all_urls) >= 80:
+            break
+        
+        safe_delay(2, 4)
+    
+    return all_urls[:80]
+
+
+def scrape_articles(driver, urls):
+    articles_data = []
+    
+    print(f"\n[SCRAPE] Processing {len(urls)} articles...\n")
+    
+    for i, url in enumerate(urls, start=1):
+        try:
+            driver.get(url)
+            safe_delay(2, 4)
             
-            print(f"Navigating to {self.base_url}...")
-            driver.get(self.base_url)
-            
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "h1"))
             )
             
-            print("Waiting for articles to load...")
-            driver.implicitly_wait(10)
+            random_mouse_move(driver)
+            safe_delay(0.5, 1)
             
-            html = driver.page_source
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            article_elements = self._find_articles(soup)
-            
-            print(f"Found {len(article_elements)} article elements")
-            
-            for article_elem in article_elements[:55]:
-                article_data = self._extract_article_data(article_elem, soup)
-                if article_data and article_data.get('title'):
-                    self.articles.append(article_data)
-                    print(f"Extracted: {article_data['title'][:50]}...")
-            
-            if len(self.articles) < 50:
-                print(f"Only found {len(self.articles)} articles, trying alternative method...")
-                self._scrape_alternative(driver, soup)
-            
-            print(f"Total articles scraped: {len(self.articles)}")
-            
-        except Exception as e:
-            print(f"Error during scraping: {e}")
-            import traceback
-            traceback.print_exc()
-        finally:
-            if driver:
-                driver.quit()
-    
-    def _find_articles(self, soup):
-        selectors = [
-            'article',
-            '[data-testid="SummaryItemResource"]',
-            '.summary-item',
-            '.post-preview',
-            '.BaseCard',
-            'a.summary-item__link',
-            '[class*="summary-item"]',
-            '[class*="SummaryItem"]',
-        ]
-        
-        for selector in selectors:
-            elements = soup.select(selector)
-            if elements:
-                print(f"Found {len(elements)} elements with selector: {selector}")
-                return elements
-        
-        return soup.find_all('article')[:60]
-
-    def _extract_article_data(self, article_elem, soup):
-        timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')
-        
-        title = ""
-        url = ""
-        description = ""
-        author = ""
-        
-        try:
-            link_elem = article_elem.find('a') or article_elem
-            if link_elem:
-                url = link_elem.get('href', '')
-                if url and not url.startswith('http'):
-                    url = self.base_url + url
-                
-                title_elem = article_elem.find(['h2', 'h3', 'h4']) or article_elem.find(['span', 'p'], class_=lambda x: x and ('title' in x.lower() or 'headline' in x.lower()))
-                if title_elem:
-                    title = title_elem.get_text(strip=True)
-                else:
-                    title = link_elem.get_text(strip=True) if link_elem else ""
-            
-            if not title:
-                title_elem = article_elem.select_one('[class*="title"], [class*="headline"], span')
-                if title_elem:
-                    title = title_elem.get_text(strip=True)
-            
-            desc_elem = article_elem.select_one('[class*="description"], [class*="dek"], [class*="summary"], p')
-            if desc_elem:
-                description = desc_elem.get_text(strip=True)
-            
-            author_elem = article_elem.select_one('[class*="author"], [class*="byline"], [class*="creator"]')
-            if author_elem:
-                author_text = author_elem.get_text(strip=True)
-                if author_text and not author_text.lower().startswith('by'):
-                    author = f"By{author_text}"
-                else:
-                    author = author_text
-        except Exception as e:
-            print(f"Error extracting article data: {e}")
-        
-        if not title:
-            return None
-        
-        return {
-            "title": title[:500] if title else "",
-            "url": url[:2000] if url else "",
-            "description": description[:1000] if description else "",
-            "author": author[:200] if author else "",
-            "scraped_at": timestamp,
-            "source": "Wired.com"
-        }
-
-    def _scrape_alternative(self, driver, soup):
-        print("Trying alternative scraping with page scrolling...")
-        
-        last_height = driver.execute_script("return document.body.scrollHeight")
-        
-        for _ in range(3):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            import time
-            time.sleep(2)
-            
-            new_height = driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
-                break
-            last_height = new_height
-        
-        html = driver.page_source
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        links = soup.select('a[href*="/story/"], a[href*="/article/"]')
-        
-        for link in links[:60]:
             try:
-                title = link.get_text(strip=True)
-                if title and len(title) > 10:
-                    url = link.get('href', '')
-                    if url and not url.startswith('http'):
-                        url = self.base_url + url
-                    
-                    parent = link.find_parent(['article', 'div', 'li'])
-                    description = ""
-                    author = ""
-                    
-                    if parent:
-                        desc_elem = parent.select_one('p, [class*="description"], [class*="dek"]')
-                        if desc_elem:
-                            description = desc_elem.get_text(strip=True)
-                        
-                        author_elem = parent.select_one('[class*="author"], [class*="byline"]')
-                        if author_elem:
-                            author = author_elem.get_text(strip=True)
-                    
-                    if parent and not any(a['url'] == url for a in self.articles):
-                        self.articles.append({
-                            "title": title[:500],
-                            "url": url[:2000],
-                            "description": description[:1000],
-                            "author": author[:200] if author else "",
-                            "scraped_at": datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f'),
-                            "source": "Wired.com"
-                        })
-            except Exception as e:
-                continue
+                title = driver.find_element(By.TAG_NAME, "h1").text.strip()
+            except:
+                title = ""
+            
+            description = get_description(driver)
+            author = get_author(driver)
+            
+            articles_data.append({
+                "title": title,
+                "url": url,
+                "description": description if description else "",
+                "author": author if author else "By Wired Staff",
+                "scraped_at": datetime.now().isoformat(),
+                "source": "Wired.com",
+            })
+            
+            has_desc = "[OK]" if description else "[NO]"
+            has_auth = "[OK]" if author else "[NO]"
+            print(f"[{i:02d}/{len(urls)}] {has_desc} {has_auth} | {title[:50]}")
+            
+            if i % 10 == 0:
+                new_ua = get_random_user_agent()
+                driver.execute_cdp_cmd("Network.setUserAgentOverride", {"userAgent": new_ua})
+                print(f"    [INFO] Rotated User-Agent")
+            
+        except Exception as e:
+            print(f"[{i:02d}] [ERR] {str(e)[:50]}")
+            continue
+    
+    return articles_data
 
-    def save_to_json(self):
-        if not self.articles:
-            print("No articles to save!")
-            return None
-        
-        output_data = {
-            "session_id": self.session_id,
-            "timestamp": datetime.now().isoformat(),
-            "articles_count": len(self.articles),
-            "articles": self.articles[:50]
-        }
-        
-        filename = f"wired_articles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        filepath = self.output_dir / filename
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2, ensure_ascii=False)
-        
-        print(f"Saved {len(self.articles)} articles to {filepath}")
-        return str(filepath)
+
+def save_results(articles_data):
+    session_id = f"wired_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    output = {
+        "session_id": session_id,
+        "timestamp": datetime.now().isoformat(),
+        "articles_count": len(articles_data),
+        "articles": articles_data,
+    }
+    
+    Path("data").mkdir(exist_ok=True)
+    
+    with open("data/wired_articles.json", "w", encoding="utf-8") as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+    print("[SAVE] JSON -> data/wired_articles.json")
+    
+    with open("data/wired_articles.csv", "w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = ["title", "url", "description", "author", "scraped_at", "source"]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for article in articles_data:
+            writer.writerow(article)
+    print("[SAVE] CSV -> data/wired_articles.csv")
+    
+    has_desc = sum(1 for a in articles_data if a["description"])
+    has_auth = sum(1 for a in articles_data if a["author"])
+    
+    print(f"""
+=======================================
+        SCRAPE SUMMARY        
+=======================================
+  Total articles  : {len(articles_data)}
+  With desc     : {has_desc}
+  With author   : {has_auth}
+=======================================
+""")
 
 
 def main():
-    scraper = WiredScraper()
-    scraper.scrape_wired()
-    output_file = scraper.save_to_json()
+    print("[START] Initializing Chrome...")
+    driver = create_driver()
     
-    if output_file:
-        print(f"Scraping completed! Output: {output_file}")
-        return 0
-    else:
-        print("Scraping failed!")
-        return 1
+    try:
+        urls = collect_article_links(driver)
+        print(f"\n[OK] Collected {len(urls)} unique article URLs")
+        
+        articles = scrape_articles(driver, urls)
+        save_results(articles)
+        
+    finally:
+        driver.quit()
+        print("[END] Done!")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -16,8 +16,8 @@ DATA_DIR = Path("data")
 class Article(BaseModel):
     title: str
     url: str
-    description: Optional[str] = ""
-    author: Optional[str] = ""
+    description: Optional[str] = None
+    author: Optional[str] = None
     scraped_at: str
     source: str = "Wired.com"
 
@@ -29,30 +29,28 @@ class SessionData(BaseModel):
     articles: List[Article]
 
 
-def find_latest_json_file() -> Optional[Path]:
-    if not DATA_DIR.exists():
+def find_latest_json_file():
+    file_path = DATA_DIR / "wired_articles.json"
+    if not file_path.exists():
         return None
-    
-    json_files = list(DATA_DIR.glob("wired_articles_*.json"))
-    if not json_files:
-        return None
-    
-    return max(json_files, key=lambda p: p.stat().st_mtime)
+    return file_path
 
 
 def load_articles_from_json() -> List[Article]:
     json_file = find_latest_json_file()
-    
+
     if not json_file:
-        raise HTTPException(status_code=404, detail="No scraped data found. Please run scraper first.")
-    
-    with open(json_file, 'r', encoding='utf-8') as f:
+        raise HTTPException(
+            status_code=404, detail="No scraped data found. Please run scraper first."
+        )
+
+    with open(json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     articles = []
-    for article_data in data.get('articles', []):
+    for article_data in data.get("articles", []):
         articles.append(Article(**article_data))
-    
+
     return articles
 
 
@@ -64,8 +62,8 @@ def root():
         "endpoints": {
             "articles": "/articles",
             "articles_count": "/articles/count",
-            "latest_file": "/latest"
-        }
+            "latest_file": "/latest",
+        },
     }
 
 
@@ -83,16 +81,18 @@ def get_articles_count():
 @app.get("/latest")
 def get_latest_session():
     json_file = find_latest_json_file()
-    
+
     if not json_file:
         raise HTTPException(status_code=404, detail="No scraped data found.")
-    
-    with open(json_file, 'r', encoding='utf-8') as f:
+
+    with open(json_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     return data
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
