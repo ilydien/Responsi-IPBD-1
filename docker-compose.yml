@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: wired_db
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile.scraper
+    volumes:
+      - ./data:/app/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - scraper
+
+  prefect:
+    image: prefecthq/prefect:2-python3.11
+    environment:
+      PREFECT_HOME: /root/.prefect
+    volumes:
+      - ./scripts:/app/scripts
+      - prefect_data:/root/.prefect
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        pip install prefect sqlalchemy asyncpg psycopg2-binary requests -q &&
+        prefect server start -h 0.0.0.0
+    ports:
+      - "4200:4200"
+      - "4201:4201"
+    depends_on:
+      - postgres
+      - api
+
+volumes:
+  postgres_data:
+  prefect_data:
